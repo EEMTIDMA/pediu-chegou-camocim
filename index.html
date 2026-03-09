@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/logo.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pediu Chegou - Logística SaaS</title>
+
+    <!-- Fontes oficiais sem preloads que geram erros -->
+    <link href="https://fonts.googleapis.com" rel="stylesheet" />
+
+    <!-- Leaflet CSS Oficial via Cloudflare (Estável e sem erro de CORS) -->
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com"
+      crossorigin="anonymous"
+    />
+
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: 'Plus Jakarta Sans', sans-serif;
+        background-color: #f8fafc;
+      }
+      #root {
+        min-height: 100vh;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
