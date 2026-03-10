@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "com.pediuchegou.camocim",
+        "sha256_cert_fingerprints": ["F6:E9:FA:3A:A9:42:08:4C:A3:11:F5:CC:0D:24:E2:1E:5C:7D:BD:D3:9C:4C:75:3F:78:C2:DF:F3:4C:45:B9:AB"]
+      }
+    }]
