@@ -1,8 +1,12 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 
-export default function Logo({ size = 320 }: { size?: number }) { // Aumentado para 320
+export default function Logo({ size = 320 }: { size?: number }) { 
   const logoPath = '/logo.png';
+  
+  // Proporções calculadas para os textos crescerem junto com a logo
+  const fontSizeTop = size * 0.12; 
+  const fontSizeMain = size * 0.35; 
 
   return (
     <div
@@ -11,12 +15,13 @@ export default function Logo({ size = 320 }: { size?: number }) { // Aumentado p
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: '20px', 
-        marginTop: '60px', // Desce mais o componente na tela
-        width: '100%',     // Garante que ocupe a largura total disponível
+        gap: '15px',
+        marginTop: '60px', // Desce o componente na página
+        width: '100%',
+        overflow: 'visible', // Garante que a logo maior não seja cortada
       }}
     >
-      {/* Container da Imagem com FORÇA no tamanho */}
+      {/* 1. Container da Imagem com tamanho REALMENTE grande */}
       <motion.div
         initial={{ x: -150, opacity: 0 }}
         animate={{ 
@@ -26,14 +31,13 @@ export default function Logo({ size = 320 }: { size?: number }) { // Aumentado p
         }}
         transition={{ 
           x: { type: "spring", stiffness: 100, damping: 15 },
-          opacity: { duration: 0.6 },
           y: { repeat: Infinity, duration: 0.3, ease: "linear" } 
         }}
         style={{ 
           width: `${size}px`, 
           height: `${size}px`,
-          minWidth: `${size}px`, // Força o tamanho mínimo
-          minHeight: `${size}px`, // Força o tamanho mínimo
+          minWidth: `${size}px`, // Força o navegador a aceitar o tamanho
+          minHeight: `${size}px`,
           position: 'relative',
           display: 'flex',
           alignItems: 'center',
@@ -48,46 +52,38 @@ export default function Logo({ size = 320 }: { size?: number }) { // Aumentado p
             objectFit: 'contain',
             filter: 'drop-shadow(0px 10px 20px rgba(0,0,0,0.5))',
           }}
-          alt="Logo Pediu Chegou Camocim"
-          onError={(e) => {
-            (e.target as HTMLImageElement).src =
-              'https://cdn-icons-png.flaticon.com';
-          }}
+          alt="Logo Pediu Chegou"
         />
 
-        {/* Farol Piscando Potente */}
+        {/* 2. Farol com brilho restaurado e proporcional */}
         <motion.div
           animate={{ 
             opacity: [0, 1, 0.4, 1, 0],
-            scale: [1, 1.8, 1.3, 1.8, 1] 
+            scale: [1, 1.5, 1.2, 1.5, 1] 
           }}
-          transition={{ 
-            duration: 1.8, 
-            repeat: Infinity, 
-            times: [0, 0.1, 0.2, 0.3, 1] 
-          }}
+          transition={{ duration: 1.8, repeat: Infinity }}
           style={{
             position: 'absolute',
-            top: '44%', 
-            right: '18%',
-            width: '35px', 
-            height: '35px',
+            top: '45%', 
+            right: '15%',
+            width: `${size * 0.12}px`, // Luz proporcional ao tamanho da moto
+            height: `${size * 0.12}px`,
             backgroundColor: '#F9DC3E',
             borderRadius: '50%',
-            filter: 'blur(12px)', 
-            boxShadow: '0 0 40px #F9DC3E, 0 0 70px #F9DC3E',
+            filter: 'blur(10px)',
+            boxShadow: '0 0 35px #F9DC3E, 0 0 60px #F9DC3E',
             pointerEvents: 'none',
             zIndex: 2
           }}
         />
       </motion.div>
 
-      {/* Textos Estáticos */}
-      <div style={{ textAlign: 'center', lineHeight: '0.8' }}>
+      {/* 3. Textos (Crescendo proporcionalmente) */}
+      <div style={{ textAlign: 'center', lineHeight: '0.8', width: '100%' }}>
         <div
           style={{
             fontWeight: '800',
-            fontSize: '18px', // Aumentado um pouco para acompanhar
+            fontSize: `${fontSizeTop}px`,
             color: '#FFFFFF',
             letterSpacing: '3px',
             textTransform: 'uppercase',
@@ -99,11 +95,11 @@ export default function Logo({ size = 320 }: { size?: number }) { // Aumentado p
         <div
           style={{
             fontWeight: '900',
-            fontSize: '62px', // Aumentado de 52 para 62
+            fontSize: `${fontSizeMain}px`, 
             color: '#F9DC3E',
-            letterSpacing: '-2px',
+            letterSpacing: '-3px',
             textTransform: 'uppercase',
-            marginTop: '8px',
+            marginTop: '10px',
             fontFamily: 'sans-serif',
           }}
         >
