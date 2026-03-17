@@ -32,6 +32,9 @@ VolumeX,
 ShoppingBag,
 CheckCircle2,
 Bell,
+Calendar,
+Clock,
+CheckCircle
 } from 'lucide-react';
 
 const CorPrincipal = '#312D6F';
@@ -60,8 +63,6 @@ cpf: '',
 endereco: { rua: '', numero: '', bairro: '' },
 gpsAtivo: true,
 taxasPendentes: 0,
-dataUltimoPagamento: null,
-historicoPagamentos: [],
 entregasConcluidas: 0,
 creditosPrioridade: 0,
 lat: null,
@@ -73,17 +74,11 @@ const [filtroPeriodo, setFiltroPeriodo] = useState('dia');
 const maskCPF = (v) => v.replace(/\D/g, '').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d{1,2})/, '$1-$2').replace(/(-\d{2})\d+?$/, '$1');
 const maskPhone = (v) => v.replace(/\D/g, '').replace(/(\d{2})(\d)/, '($1) $2').replace(/(\d{5})(\d)/, '$1-$2').replace(/(-\d{4})\d+?$/, '$1');
 
-// ✅ CORREÇÃO 1: Função WhatsApp Segura com Fallback e Template String correta
 const abrirWhats = (numero) => {
-  if (!numero) {
-    alert("Telefone não encontrado");
-    return;
-  }
-  let limpo = String(numero).replace(/\D/g, '');
-  if (!limpo.startsWith('55')) {
-    limpo = '55' + limpo;
-  }
-  window.open(`https://wa.me/${limpo}`, '_blank');
+if (!numero) { alert("Telefone não encontrado"); return; }
+let limpo = String(numero).replace(/\D/g, '');
+if (!limpo.startsWith('55')) limpo = '55' + limpo;
+window.open(`https://wa.me{limpo}`, '_blank');
 };
 
 const calcularDistancia = (lat1, lon1, lat2, lon2) => {
@@ -95,25 +90,32 @@ const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos((lat1 * Math.PI) / 
 return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 };
 
-// ✅ CORREÇÃO 2: Áudio funcional
 const playAlert = () => {
 if (!notificacaoSonora) return;
 const audio = new Audio('https://assets.mixkit.co');
 audio.play().catch(() => {});
 };
 
-useEffect(() => {
-chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-}, [mensagensChat, activeTab]);
+const calcularCiclos = (lista) => {
+const ciclos = {};
+lista.filter(p => p.status === 'entregue' && p.entregadorId === user?.uid).forEach(p => {
+const data = p.horaEntrega?.toDate ? p.horaEntrega.toDate() : p.horaEntrega?.seconds ? new Date(p.horaEntrega.seconds * 1000) : new Date();
+const mes = data.getMonth() + 1;
+const ano = data.getFullYear();
+const quinzena = data.getDate() <= 15 ? "1ª Quinzena" : "2ª Quinzena";
+const chave = `${quinzena} - ${mes}/${ano}`;
+if (!ciclos[chave]) ciclos[chave] = { valor: 0, status: 'PAGO' };
+ciclos[chave].valor += 0.30;
+if (!p.pagoAoAdmin) ciclos[chave].status = 'PENDENTE';
+});
+return Object.entries(ciclos).reverse();
+};
 
 useEffect(() => {
 if (!user?.uid) return;
-
 const unsubPerfil = onSnapshot(doc(db, 'perfil_entregador', user.uid), (d) => {
 if (d.exists()) setPerfil((prev) => ({ ...prev, ...d.data() }));
 });
-
-// ✅ CORREÇÃO 4: Dependência corrigida para evitar loops
 const qPed = query(collection(db, 'pedidos'), orderBy('horaSolicitacao', 'desc'));
 const unsubPed = onSnapshot(qPed, (s) => {
 const novosPedidos = s.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -121,28 +123,22 @@ const temNovoPendente = novosPedidos.some((p) => p.status === 'pendente' && !ped
 if (temNovoPendente) playAlert();
 setPedidos(novosPedidos);
 });
-
 const qM1 = query(collection(db, 'mensagens_suporte'), where('entregadorId', '==', user.uid));
 const qM2 = query(collection(db, 'respostas_suporte'), where('entregadorId', '==', user.uid));
-
-let m1 = [];
-let m2 = [];
-
+let m1 = []; let m2 = [];
 const unsubM1 = onSnapshot(qM1, (s) => {
 m1 = s.docs.map(d => ({ id: d.id, ...d.data(), remetente: 'entregador', ts: d.data().data?.seconds || 0 }));
 setMensagensChat([...m1, ...m2].sort((a, b) => a.ts - b.ts));
 });
-
 const unsubM2 = onSnapshot(qM2, (s) => {
 m2 = s.docs.map(d => ({ id: d.id, ...d.data(), remetente: 'admin', ts: d.data().timestamp?.seconds || 0 }));
 setMensagensChat([...m1, ...m2].sort((a, b) => a.ts - b.ts));
 });
-
 return () => { unsubPerfil(); unsubPed(); unsubM1(); unsubM2(); };
 }, [user?.uid]);
 
 const handleUploadFoto = async (e) => {
-const file = e.target.files[0]; // ✅ CORREÇÃO 3: Pega o arquivo corretamente
+const file = e.target.files[0];
 if (!file) return;
 setUploading(true);
 try {
@@ -157,12 +153,7 @@ alert('Foto atualizada!');
 const enviarMensagemSuporte = async () => {
 if (!msgSuporte.trim()) return;
 await addDoc(collection(db, 'mensagens_suporte'), { 
-entregadorId: user.uid, 
-entregadorNome: perfil.nome, 
-texto: msgSuporte, 
-data: serverTimestamp(), 
-remetente: 'entregador', 
-respondido: false 
+entregadorId: user.uid, entregadorNome: perfil.nome, texto: msgSuporte, data: serverTimestamp(), remetente: 'entregador', respondido: false 
 });
 setMsgSuporte('');
 };
@@ -178,6 +169,7 @@ setActiveTab('ativos');
 }
 if (status === 'entregue') {
 dados.horaEntrega = serverTimestamp();
+dados.pagoAoAdmin = false;
 await updateDoc(doc(db, 'perfil_entregador', user.uid), { 
 entregasConcluidas: increment(1), 
 creditosPrioridade: (perfil.entregasConcluidas + 1) % 10 === 0 ? increment(1) : increment(0) 
@@ -199,8 +191,7 @@ return diff <= periodo && p.entregadorId === user?.uid && p.status === 'entregue
 
 const entreguesFiltradas = filtrarGanhos(pedidos);
 const valorBrutoTotal = entreguesFiltradas.reduce((acc, p) => acc + (parseFloat(p.valorEntrega) || 0) + 0.3, 0);
-const taxaAdminTotal = entreguesFiltradas.length * 0.3;
-const valorLiquidoTotal = valorBrutoTotal - taxaAdminTotal;
+const debitosAtuais = pedidos.filter(p => p.entregadorId === user?.uid && p.status === 'entregue' && !p.pagoAoAdmin).length * 0.30;
 
 return (
 <div style={{ minHeight: '100vh', backgroundColor: '#F8F9FA', paddingBottom: '80px', fontFamily: 'sans-serif' }}>
@@ -211,7 +202,7 @@ return (
 </div>
 <div>
 <p style={{ fontSize: '12px', margin: 0, fontWeight: 'bold' }}>
-{perfil.nome ? perfil.nome.split(' ') : 'Entregador'} {perfil.creditosPrioridade > 0 && <span style={{ color: CorDestaque }}>★{perfil.creditosPrioridade}</span>}
+{perfil.nome ? perfil.nome.split(' ')[0] : 'Entregador'} {perfil.creditosPrioridade > 0 && <span style={{ color: CorDestaque }}>★{perfil.creditosPrioridade}</span>}
 </p>
 <button onClick={async () => await updateDoc(doc(db, 'perfil_entregador', user.uid), { gpsAtivo: !perfil.gpsAtivo })} style={{ background: perfil.gpsAtivo ? '#2ecc71' : '#e74c3c', border: 'none', color: '#FFF', fontSize: '10px', padding: '2px 8px', borderRadius: '10px' }}>
 {perfil.gpsAtivo ? 'ONLINE' : 'OFFLINE'}
@@ -236,7 +227,7 @@ return (
 {activeTab === 'hoje' && (
 <section>
 <div style={{ background: CorPrincipal, padding: '20px', borderRadius: '15px', color: '#FFF', marginBottom: '20px' }}>
-<h2 style={{ margin: 0, fontSize: '20px' }}>Olá, {perfil.nome ? perfil.nome.split(' ') : 'Entregador'}! 👋</h2>
+<h2 style={{ margin: 0, fontSize: '20px' }}>Olá, {perfil.nome ? perfil.nome.split(' ')[0] : 'Entregador'}! 👋</h2>
 <p style={{ margin: '5px 0 0 0', opacity: 0.9, fontSize: '14px' }}>Tenha um bom trabalho!</p>
 <div style={{ display: 'flex', gap: '5px', marginTop: '10px' }}>
 {[1,2,3,4,5].map((s) => <Star key={s} size={16} fill={s <= Math.round(perfil.rating) ? CorDestaque : 'none'} color={CorDestaque} />)}
@@ -259,9 +250,7 @@ return !p.entregadorId && perfil.gpsAtivo && p.status === 'pendente' && dist <= 
 <p style={{ margin: 0, fontSize: '14px', color: CorPrincipal }}>
 <ShoppingBag size={14} /> <b>VALOR TOTAL: R$ {parseFloat(p.totalGeral || 0).toFixed(2)}</b>
 </p>
-<p style={{ margin: '4px 0 0 0', fontSize: '11px', color: '#666' }}>
-Forma: <strong>{p.pagamento?.toUpperCase()}</strong>
-</p>
+<p style={{ margin: '4px 0 0 0', fontSize: '11px', color: '#666' }}>Forma: <strong>{p.pagamento?.toUpperCase()}</strong></p>
 </div>
 <p style={{ fontSize: '13px' }}><MapPin size={12} /> {p.enderecoEntrega?.rua}, {p.enderecoEntrega?.bairro}</p>
 <button onClick={() => gerenciarStatus(p.id, 'em_transito')} style={{ width: '100%', padding: '12px', background: CorPrincipal, color: CorDestaque, border: 'none', borderRadius: '8px', fontWeight: 'bold', marginTop: '5px' }}>ACEITAR PEDIDO</button>
@@ -289,9 +278,7 @@ Forma: <strong>{p.pagamento?.toUpperCase()}</strong>
 </p>
 </div>
 )}
-
 <div style={{ display: 'flex', gap: '10px', margin: '15px 0' }}>
-{/* ✅ CORREÇÃO: Botão da Loja com Fallback para evitar erro DNS */}
 <button onClick={() => abrirWhats(p.lojaTelefone || p.telefone)} style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #DDD', background: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
 <MessageSquare size={16} /> Loja
 </button>
@@ -322,15 +309,10 @@ Forma: <strong>{p.pagamento?.toUpperCase()}</strong>
 <span style={{ fontSize: '12px', fontWeight: 'bold', color: CorPrincipal }}>{p.codigoRastreio} • {p.lojaNome || p.nomeLoja}</span>
 <span style={{ fontSize: '10px', color: '#999' }}>{p.horaEntrega?.toDate?.().toLocaleDateString('pt-BR')}</span>
 </div>
-<div style={{ fontSize: '13px', marginBottom: '10px' }}>
-<p style={{ margin: '2px 0' }}><b>Cliente:</b> {p.clienteNome}</p>
-<p style={{ margin: '2px 0', color: '#666' }}>📍 {p.enderecoEntrega?.rua}, {p.enderecoEntrega?.numero} - {p.enderecoEntrega?.bairro}</p>
-</div>
 <div style={{ background: '#F9F9F9', padding: '8px', borderRadius: '6px', fontSize: '11px', display: 'grid', gap: '3px' }}>
-<div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Produto:</span> <b>R$ {parseFloat(p.valorProdutos || 0).toFixed(2)}</b></div>
 <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Entrega:</span> <b>R$ {parseFloat(p.valorEntrega || 0).toFixed(2)}</b></div>
 <div style={{ display: 'flex', justifyContent: 'space-between', color: '#312D6F' }}><span>Taxa App:</span> <b>R$ 0.30</b></div>
-<div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', borderTop: '1px solid #DDD', paddingTop: '4px', marginTop: '4px' }}><span>Total Recebido:</span> <b>R$ {(parseFloat(p.valorEntrega || 0) + 0.3).toFixed(2)}</b></div>
+<div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', borderTop: '1px solid #DDD', paddingTop: '4px', marginTop: '4px' }}><span>Total:</span> <b>R$ {(parseFloat(p.valorEntrega || 0) + 0.3).toFixed(2)}</b></div>
 </div>
 </div>
 ))}
@@ -340,14 +322,27 @@ Forma: <strong>{p.pagamento?.toUpperCase()}</strong>
 {activeTab === 'financeiro' && (
 <section>
 <div style={{ background: CorPrincipal, color: '#FFF', padding: '20px', borderRadius: '15px', marginBottom: '20px' }}>
-<div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', opacity: 0.8, marginBottom: '10px' }}>
-<span>RECEBIDO: R$ {valorBrutoTotal.toFixed(2)}</span>
-<span>LÍQUIDO: R$ {valorLiquidoTotal.toFixed(2)}</span>
-</div>
-<p style={{ margin: 0, fontSize: '12px' }}>DÉBITO PARA REPASSE</p>
-<h2 style={{ color: CorDestaque, margin: '5px 0' }}>R$ {taxaAdminTotal.toFixed(2)}</h2>
+<div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', opacity: 0.8, marginBottom: '10px' }}><span>DÉBITO ACUMULADO</span><span>{pedidos.filter(p => p.entregadorId === user?.uid && p.status === 'entregue' && !p.pagoAoAdmin).length} ENTREGAS</span></div>
+<h2 style={{ color: CorDestaque, margin: '5px 0' }}>R$ {debitosAtuais.toFixed(2)}</h2>
 <button onClick={() => { navigator.clipboard.writeText('88994125539'); alert('Pix Copiado!'); }} style={{ width: '100%', padding: '12px', background: CorDestaque, color: CorPrincipal, border: 'none', borderRadius: '8px', fontWeight: 'bold', marginTop: '10px' }}>COPIAR PIX ADMIN</button>
 </div>
+
+<div style={{ background: '#FFF', padding: '15px', borderRadius: '12px', marginBottom: '20px' }}>
+<h4 style={{ margin: '0 0 10px 0', fontSize: '14px' }}><Calendar size={16} /> Relatório de Quinzena</h4>
+{calcularCiclos(pedidos).map(([ciclo, dados]) => {
+const diaAtual = new Date().getDate();
+const isAtrasado = dados.status === 'PENDENTE' && ((ciclo.includes("1ª Quinzena") && diaAtual > 17) || (ciclo.includes("2ª Quinzena") && diaAtual > 2));
+return (
+<div key={ciclo} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid #EEE', fontSize: '12px' }}>
+<span>{ciclo} {isAtrasado && <b style={{color: 'red'}}>(ATRASADO)</b>}</span>
+<div style={{ textAlign: 'right' }}>
+<b style={{ display: 'block' }}>R$ {dados.valor.toFixed(2)}</b>
+<span style={{ color: dados.status === 'PAGO' ? '#2ecc71' : '#e74c3c', fontSize: '10px', fontWeight: 'bold' }}>{dados.status}</span>
+</div>
+</div>
+)})}
+</div>
+
 <div style={{ background: '#FFF', padding: '15px', borderRadius: '12px', height: '350px', display: 'flex', flexDirection: 'column' }}>
 <div style={{ flex: 1, overflowY: 'auto', background: '#F9F9F9', borderRadius: '8px', padding: '10px', marginBottom: '10px' }}>
 {mensagensChat.map((m) => (
@@ -358,7 +353,7 @@ Forma: <strong>{p.pagamento?.toUpperCase()}</strong>
 <div ref={chatEndRef} />
 </div>
 <div style={{ display: 'flex', gap: '5px' }}>
-<input value={msgSuporte} onChange={(e) => setMsgSuporte(e.target.value)} placeholder="Mensagem..." style={{ flex: 1, padding: '10px', border: '1px solid #DDD', borderRadius: '8px' }} />
+<input value={msgSuporte} onChange={(e) => setMsgSuporte(e.target.value)} placeholder="Suporte financeiro..." style={{ flex: 1, padding: '10px', border: '1px solid #DDD', borderRadius: '8px' }} />
 <button onClick={enviarMensagemSuporte} style={{ background: CorPrincipal, color: '#FFF', border: 'none', borderRadius: '8px', padding: '10px' }}><Send size={18} /></button>
 </div>
 </div>
