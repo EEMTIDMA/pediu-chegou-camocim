@@ -3,315 +3,229 @@ import React, { useState, useEffect, useRef } from 'react';
 import { db, auth, storage } from '../firebase/config';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import {
-  collection,
-  addDoc,
-  serverTimestamp,
-  query,
-  where,
-  onSnapshot,
-  orderBy,
-  doc,
-  setDoc,
-  getDoc,
-  updateDoc,
+  collection, addDoc, serverTimestamp, query, where, onSnapshot,
+  doc, setDoc, getDoc, updateDoc,
 } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { signOut } from 'firebase/auth';
 import {
-  PackagePlus,
-  Send,
-  History,
-  User,
-  MapPin,
-  LogOut,
-  Printer,
-  Building2,
-  Search,
-  Bell,
-  Volume2,
-  VolumeX,
-  Camera,
-  Loader2,
-  Clock,
-  CheckCircle,
+  PackagePlus, Send, History, User, MapPin, LogOut, Printer,
+  Camera, Loader2, Upload, Edit, Clock, UserCheck, Bike, CheckCircle
 } from 'lucide-react';
+
+import { buscarSugestoes, calcularRotaReal } from '../services/maps';
 
 const CorPrincipal = '#312D6F';
 const CorDestaque = '#FFD700';
 const CorFundo = '#F0F2F5';
+const RAIO_MAXIMO_KM = 4;
+const TAXA_FIXA_ADM = 0.30;
 
-const cardBase = {
-  backgroundColor: '#FFF',
-  borderRadius: '20px',
-  padding: '25px',
-  boxShadow: '0 8px 30px rgba(0,0,0,0.08)',
-  marginBottom: '20px',
-};
-
-const inputStyle = {
-  width: '100%',
-  padding: '12px 15px',
-  borderRadius: '12px',
-  border: '2px solid #E0E4EC',
-  fontSize: '14px',
-  outline: 'none',
-  boxSizing: 'border-box',
-};
-
-const tabActive = {
-  flex: 1,
-  padding: '12px',
-  backgroundColor: CorPrincipal,
-  color: CorDestaque,
-  border: 'none',
-  borderRadius: '12px',
-  fontWeight: '800',
-  cursor: 'pointer',
-  display: 'flex',
-  justifyContent: 'center',
-  alignItems: 'center',
-  gap: '8px',
-};
-
-const tabInactive = {
-  flex: 1,
-  padding: '12px',
-  backgroundColor: 'transparent',
-  color: '#666',
-  border: 'none',
-  fontWeight: '600',
-  cursor: 'pointer',
-  display: 'flex',
-  justifyContent: 'center',
-  alignItems: 'center',
-  gap: '8px',
-};
+const cardBase = { backgroundColor: '#FFF', borderRadius: '20px', padding: '25px', boxShadow: '0 8px 30px rgba(0,0,0,0.08)', marginBottom: '20px' };
+const inputStyle = { width: '100%', padding: '12px 15px', borderRadius: '12px', border: '2px solid #E0E4EC', fontSize: '14px', outline: 'none', boxSizing: 'border-box' };
+const tabActive = { flex: 1, padding: '12px', backgroundColor: CorPrincipal, color: CorDestaque, border: 'none', borderRadius: '12px', fontWeight: '800', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' };
+const tabInactive = { flex: 1, padding: '12px', backgroundColor: 'transparent', color: '#666', border: 'none', fontWeight: '600', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' };
 
 export default function EmpresaDash() {
   const { user } = useAuth();
   const fileInputRef = useRef(null);
   const [activeTab, setActiveTab] = useState('pedidos');
   const [loading, setLoading] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [pedidos, setPedidos] = useState([]);
-  const [entregadoresOnline, setEntregadoresOnline] = useState([]);
-  const [buscaPedido, setBuscaPedido] = useState('');
+  const [filtroPeriodo, setFiltroPeriodo] = useState('dia');
   const [distanciaKm, setDistanciaKm] = useState(0);
-  const [notificacaoSonora, setNotificacaoSonora] = useState(true);
-
-  // Estados para o Filtro de Data
-  const [dataInicio, setDataInicio] = useState('');
-  const [dataFim, setDataFim] = useState('');
-
+  const [coordCliente, setCoordCliente] = useState({ lat: null, lng: null });
+  const [sugestoesEndereco, setSugestoesEndereco] = useState([]);
+  
   const [perfil, setPerfil] = useState({
-    nome: '',
-    responsavel: '',
-    telefone: '',
-    rua: '',
-    numero: '',
-    bairro: '',
-    logo: '',
-    lat: null,
-    lng: null,
-    gpsAtivo: true,
+    nomeSocial: '', nomeFantasia: '', responsavel: '', 
+    telefoneFixo: '', telefoneComercial: '', whatsapp: '',
+    rua: '', numero: '', bairro: '', logo: '', lat: null, lng: null
   });
 
   const [form, setForm] = useState({
-    cliente: '',
-    telefone: '',
-    rua: '',
-    numero: '',
-    bairro: '',
-    descricao: '',
-    valor: '',
-    pagamento: 'pix',
-    entregadorTipo: 'publico',
-    entregadorId: '',
+    cliente: '', telefone: '', rua: '', numero: '', bairro: '', 
+    descricao: '', valor: '', pagamento: 'pix', entregadorTipo: 'publico'
   });
-
-  const calcularTaxaEntrega = (km) => {
-    if (km <= 1) return 4.0;
-    if (km <= 3) return 5.0;
-    if (km <= 5) return 6.0;
-    if (km <= 7) return 7.0;
-    const kmExtra = Math.ceil(km - 7);
-    return 10.0 + (10.0 * 0.2 * kmExtra); 
-  };
-
-  const taxaEntregaCalculada = calcularTaxaEntrega(distanciaKm);
-  const taxaAdmin = 0.3;
-  const valorTotalSoma = (parseFloat(form.valor) || 0) + (distanciaKm > 0 ? taxaEntregaCalculada : 0) + taxaAdmin;
-
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      const pedidosPendentes = pedidos.filter(
-        (p) => p.status === 'pendente' && !p.entregadorId
-      );
-      for (const pedido of pedidosPendentes) {
-        const agora = Date.now();
-        const criacao = pedido.horaSolicitacao?.seconds * 1000 || agora;
-        const decorrido = (agora - criacao) / 1000;
-        let novoRaio = 1;
-        if (decorrido >= 90) novoRaio = 8;
-        else if (decorrido >= 60) novoRaio = 4;
-        else if (decorrido >= 30) novoRaio = 2;
-
-        if (novoRaio > (pedido.raioBusca || 1)) {
-          await updateDoc(doc(db, 'pedidos', pedido.id), {
-            raioBusca: novoRaio,
-          });
-        }
-      }
-    }, 10000);
-    return () => clearInterval(interval);
-  }, [pedidos]);
 
   useEffect(() => {
     if (!user?.uid) return;
+    
     getDoc(doc(db, 'perfil_empresa', user.uid)).then((d) => {
-      if (d.exists()) setPerfil((prev) => ({ ...prev, ...d.data() }));
+      if (d.exists()) {
+        const dados = d.data();
+        setPerfil({
+          nomeSocial: dados.nomeSocial || '',
+          nomeFantasia: dados.nomeFantasia || '',
+          responsavel: dados.responsavel || '',
+          telefoneFixo: dados.telefoneFixo || '',
+          telefoneComercial: dados.telefoneComercial || '',
+          whatsapp: dados.whatsapp || '',
+          rua: dados.rua || '',
+          numero: dados.numero || '',
+          bairro: dados.bairro || '',
+          logo: dados.logo || '',
+          lat: dados.lat || null,
+          lng: dados.lng || null
+        });
+      }
     });
-    const qEnt = query(
-      collection(db, 'perfil_entregador'),
-      where('gpsAtivo', '==', true)
-    );
-    const unsubEnt = onSnapshot(qEnt, (s) => {
-      setEntregadoresOnline(s.docs.map((d) => ({ id: d.id, ...d.data() })));
+
+    const q = query(collection(db, 'pedidos'), where('empresaId', '==', String(user.uid)));
+    
+    const unsub = onSnapshot(q, (s) => {
+      const listaRaw = s.docs.map(d => ({ id: d.id, ...d.data() }));
+      const agora = new Date();
+      const hoje = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate()).getTime();
+      const seteDias = hoje - (7 * 24 * 60 * 60 * 1000);
+      const trintaDias = hoje - (30 * 24 * 60 * 60 * 1000);
+
+      const filtrados = listaRaw.filter(p => {
+        const ts = p.horaSolicitacao?.seconds ? p.horaSolicitacao.seconds * 1000 : Date.now();
+        if (filtroPeriodo === 'dia') return ts >= hoje;
+        if (filtroPeriodo === 'semana') return ts >= seteDias;
+        if (filtroPeriodo === 'mes') return ts >= trintaDias;
+        return true;
+      });
+      setPedidos(filtrados.sort((a,b) => (b.horaSolicitacao?.seconds || 0) - (a.horaSolicitacao?.seconds || 0)));
     });
-    const qPed = query(
-      collection(db, 'pedidos'),
-      where('empresaId', '==', String(user.uid))
-    );
-    const unsubPed = onSnapshot(qPed, (s) => {
-      let lista = s.docs.map((d) => ({ id: d.id, ...d.data() }));
-      lista.sort((a, b) => (b.horaSolicitacao?.seconds || 0) - (a.horaSolicitacao?.seconds || 0));
-      setPedidos(lista);
-    });
-    return () => {
-      unsubEnt();
-      unsubPed();
-    };
-  }, [user]);
+    return () => unsub();
+  }, [user, filtroPeriodo]);
+
+  const gerarCodigoPC = () => `PC-${Math.floor(1000 + Math.random() * 9000)}`;
+  const taxaEntrega = (km) => km <= 1 ? 4.0 : km <= 3 ? 5.0 : km <= 5 ? 6.0 : km <= 7 ? 7.0 : 10.0 + (10.0 * 0.2 * Math.ceil(km - 7));
+  const totalPedido = (Number(form.valor) || 0) + (distanciaKm > 0 ? taxaEntrega(distanciaKm) : 0) + TAXA_FIXA_ADM;
 
   const handleUploadLogo = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setUploading(true);
+    if (!e.target.files) return;
+    setLoading(true);
     try {
-      const storageRef = ref(storage, `empresas/${user.uid}/logo.jpg`);
-      await uploadBytes(storageRef, file);
+      const storageRef = ref(storage, `logos/${user.uid}`);
+      await uploadBytes(storageRef, e.target.files[0]);
       const url = await getDownloadURL(storageRef);
-      await updateDoc(doc(db, 'perfil_empresa', user.uid), { logo: url });
-      setPerfil((prev) => ({ ...prev, logo: url }));
-    } catch (error) {
-      alert('Erro no upload');
-    }
-    setUploading(false);
-  };
-
-  const calcularHaversine = (lat1, lon1, lat2, lon2) => {
-    const R = 6371;
-    const dLat = ((lat2 - lat1) * Math.PI) / 180;
-    const dLon = ((lon2 - lon1) * Math.PI) / 180;
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos((lat1 * Math.PI) / 180) *
-        Math.cos((lat2 * Math.PI) / 180) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
-    return parseFloat((R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)))).toFixed(2));
+      setPerfil(prev => ({ ...prev, logo: url }));
+      await setDoc(doc(db, 'perfil_empresa', user.uid), { logo: url }, { merge: true });
+      alert("Logo atualizada!");
+    } catch (err) { alert("Erro no upload"); }
+    setLoading(false);
   };
 
   const handleCriarPedido = async (e) => {
     e.preventDefault();
-    if (distanciaKm <= 0) return alert('Calcule a distância primeiro!');
+    if (distanciaKm <= 0) return alert('Calcule o KM primeiro!');
+    if (!perfil.lat) return alert('Fixe o GPS da Loja no Perfil!');
     setLoading(true);
-    const cod = `PC-${Math.floor(1000 + Math.random() * 9000)}`;
+    const codigo = gerarCodigoPC();
     try {
       await addDoc(collection(db, 'pedidos'), {
         ...form,
-        entregadorId: form.entregadorTipo === 'publico' ? '' : form.entregadorId,
         clienteNome: form.cliente,
         clienteTelefone: form.telefone,
         enderecoEntrega: { rua: form.rua, numero: form.numero, bairro: form.bairro },
-        lojaNome: perfil.nome,
-        lojaTelefone: perfil.telefone,
-        valorProdutos: parseFloat(form.valor),
-        valorEntrega: taxaEntregaCalculada,
-        valorTaxaAdmin: taxaAdmin,
-        totalGeral: valorTotalSoma,
+        valorProdutos: Number(form.valor) || 0,
+        valorEntrega: taxaEntrega(distanciaKm),
+        valorTaxaAdmin: TAXA_FIXA_ADM,
+        totalGeral: totalPedido,
         status: 'pendente',
-        codigoRastreio: cod,
+        codigoRastreio: codigo,
         horaSolicitacao: serverTimestamp(),
         empresaId: String(user.uid),
-        latLoja: perfil.lat,
-        lngLoja: perfil.lng,
-        raioBusca: 1,
-        pagoAoAdmin: false,
+        nomeLoja: perfil.nomeFantasia || 'Loja',
+        lojaNome: perfil.nomeFantasia || 'Loja', // Correção para o entregador
+        lojaTelefone: perfil.whatsapp || '', // Correção para contato
+        distanciaKm: Number(distanciaKm) || 0,
+        latLoja: Number(perfil.lat), 
+        lngLoja: Number(perfil.lng),
+        latCliente: Number(coordCliente.lat), 
+        lngCliente: Number(coordCliente.lng),
+        raioBusca: 50, // Garante visibilidade
+        indiceFila: 0,
+        entregadoresNotificados: []
       });
-      alert('Pedido Gerado: ' + cod);
-      setForm({
-        cliente: '', telefone: '', rua: '', numero: '', bairro: '',
-        descricao: '', valor: '', pagamento: 'pix', entregadorTipo: 'publico', entregadorId: '',
-      });
+      alert(`Pedido ${codigo} Lançado!`);
+      setForm({ cliente: '', telefone: '', rua: '', numero: '', bairro: '', descricao: '', valor: '', pagamento: 'pix', entregadorTipo: 'publico' });
       setDistanciaKm(0);
-    } catch (err) {
-      alert('Erro ao gravar');
-    }
+    } catch (err) { alert('Erro ao gravar'); }
     setLoading(false);
   };
 
-  const listaFiltrada = pedidos.filter((p) => {
-    const termo = (buscaPedido || '').toLowerCase();
-    const matchesSearch = (p.clienteNome || '').toLowerCase().includes(termo) || (p.codigoRastreio || '').toLowerCase().includes(termo);
-    
-    // Filtro de data
-    if (!p.horaSolicitacao) return matchesSearch;
-    const dataPedido = new Date(p.horaSolicitacao.seconds * 1000);
-    const inicio = dataInicio ? new Date(dataInicio + 'T00:00:00') : null;
-    const fim = dataFim ? new Date(dataFim + 'T23:59:59') : null;
-    
-    const matchesData = (!inicio || dataPedido >= inicio) && (!fim || dataPedido <= fim);
-    
-    return matchesSearch && matchesData;
-  });
+  /* ================= CALCULOS DASHBOARD ================= */
+  const pedidosConcluidos = (pedidos || []).filter(p => p?.status === 'entregue');
+  const totalProdutosRel = (pedidos || []).reduce((a,b)=>a + (Number(b?.valorProdutos)||0),0);
+  const totalFretesRel = (pedidos || []).reduce((a,b)=>a + (Number(b?.valorEntrega)||0),0);
+  const totalTaxasRel = (pedidos || []).reduce((a,b)=>a + (Number(b?.valorTaxaAdmin) || TAXA_FIXA_ADM),0);
+  const lucroLiquidoRel = totalTaxasRel; 
+  const ticketMedioRel = (pedidos || []).length > 0 ? (totalProdutosRel + totalFretesRel + totalTaxasRel) / pedidos.length : 0;
+
+  const rankingEntregadoresRel = Object.values((pedidos || []).reduce((acc,p)=>{
+      const nome = p?.entregadorNome || "Não atribuído";
+      if(!acc[nome]){ acc[nome] = { nome, pedidos:0 }; }
+      acc[nome].pedidos += 1;
+      return acc;
+    },{})).sort((a,b)=>b.pedidos-a.pedidos);
+
+  const gerarGraficoRel = () => {
+    const dias = {};
+    (pedidos || []).forEach(p=>{
+      const ts = p.horaSolicitacao?.seconds;
+      if(!ts) return;
+      const data = new Date(ts*1000).toLocaleDateString('pt-BR', {day:'2-digit', month:'2-digit'});
+      dias[data] = (dias[data]||0) + (Number(p.totalGeral)||0);
+    });
+    const labels = Object.keys(dias).slice(-7);
+    const valores = labels.map(l => dias[l]);
+    const max = Math.max(...valores, 1);
+    return {labels, valores, max};
+  };
+  const dG = gerarGraficoRel();
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: CorFundo, fontFamily: 'sans-serif' }}>
-      <nav style={{ backgroundColor: CorPrincipal, padding: '15px 25px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#FFF', borderBottom: `4px solid ${CorDestaque}` }}>
+      <nav style={{ backgroundColor: CorPrincipal, padding: '15px 25px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#FFF' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <PackagePlus color={CorDestaque} size={28} />
-          <strong>{perfil.nome || 'APP PEDIU CHEGOU'}</strong>
+          {perfil.logo && <img src={perfil.logo} alt="logo" style={{ width: 35, height: 35, borderRadius: '50%', objectFit: 'cover' }} />}
+          <strong>{perfil.nomeFantasia || 'APP PEDIU CHEGOU'}</strong>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-          <div onClick={() => setNotificacaoSonora(!notificacaoSonora)} style={{ cursor: 'pointer' }}>
-            {notificacaoSonora ? <Volume2 size={20} color={CorDestaque} /> : <VolumeX size={20} color="#999" />}
-          </div>
-          <Bell size={20} style={{ cursor: 'pointer' }} />
-          <LogOut onClick={() => signOut(auth)} style={{ cursor: 'pointer' }} size={20} />
-        </div>
+        <LogOut onClick={() => signOut(auth)} size={20} style={{ cursor: 'pointer' }} />
       </nav>
 
-      <div style={{ backgroundColor: '#FFF', display: 'flex', padding: '10px', gap: '5px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)' }}>
-        <button onClick={() => setActiveTab('pedidos')} style={activeTab === 'pedidos' ? tabActive : tabInactive}><Send size={18} /> NOVO</button>
+      <div style={{ backgroundColor: '#FFF', display: 'flex', padding: '10px', gap: '5px' }}>
+        <button onClick={() => setActiveTab('pedidos')} style={activeTab === 'pedidos' ? tabActive : tabInactive}><Send size={18} /> HOJE</button>
         <button onClick={() => setActiveTab('historico')} style={activeTab === 'historico' ? tabActive : tabInactive}><History size={18} /> RELATÓRIO</button>
         <button onClick={() => setActiveTab('perfil')} style={activeTab === 'perfil' ? tabActive : tabInactive}><User size={18} /> PERFIL</button>
       </div>
 
       <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto' }}>
+        
         {activeTab === 'pedidos' && (
           <section style={cardBase}>
             <form onSubmit={handleCriarPedido} style={{ display: 'grid', gap: '15px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
-                <input style={inputStyle} placeholder="Cliente" value={form.cliente} onChange={(e) => setForm({ ...form, cliente: e.target.value })} required />
-                <input style={inputStyle} placeholder="WhatsApp" value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} required />
+                <input style={inputStyle} placeholder="Nome do Cliente" value={form.cliente} onChange={(e) => setForm({ ...form, cliente: e.target.value })} required />
+                <input style={inputStyle} placeholder="Telefone / WhatsApp" value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} required />
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 2fr', gap: '10px' }}>
-                <input style={inputStyle} placeholder="Rua" value={form.rua} onChange={(e) => setForm({ ...form, rua: e.target.value })} required />
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 2fr', gap: '10px', position: 'relative' }}>
+                <div style={{ position: 'relative' }}>
+                  <input style={inputStyle} placeholder="Rua" value={form.rua} onChange={async (e) => { 
+                    setForm({ ...form, rua: e.target.value }); 
+                    const res = await buscarSugestoes(e.target.value); setSugestoesEndereco(res);
+                  }} required />
+                  {sugestoesEndereco.length > 0 && (
+                    <div style={{ position: 'absolute', width: '100%', background: '#FFF', zIndex: 100, border: '1px solid #EEE', top: '100%', borderRadius: '8px', boxShadow: '0 4px 10px rgba(0,0,0,0.1)' }}>
+                      {sugestoesEndereco.map((s, i) => (
+                        <div key={i} style={{ padding: '10px', cursor: 'pointer', borderBottom: '1px solid #EEE', fontSize: '13px' }} onClick={() => {
+                          setForm({ ...form, rua: s.rua, bairro: s.bairro || form.bairro });
+                          setCoordCliente({ lat: s.lat, lng: s.lng });
+                          setSugestoesEndereco([]);
+                        }}>{s.rua} {s.bairro ? `- ${s.bairro}` : ''}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <input style={inputStyle} placeholder="Nº" value={form.numero} onChange={(e) => setForm({ ...form, numero: e.target.value })} required />
                 <input style={inputStyle} placeholder="Bairro" value={form.bairro} onChange={(e) => setForm({ ...form, bairro: e.target.value })} required />
               </div>
-              <textarea style={{ ...inputStyle, height: '60px' }} placeholder="Itens do Pedido" value={form.descricao} onChange={(e) => setForm({ ...form, descricao: e.target.value })} required />
+              <textarea style={{ ...inputStyle, height: '60px' }} placeholder="Descrição do Pedido..." value={form.descricao} onChange={(e) => setForm({ ...form, descricao: e.target.value })} required />
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
                 <select style={inputStyle} value={form.pagamento} onChange={(e) => setForm({ ...form, pagamento: e.target.value })}>
                   <option value="pix">PIX</option>
@@ -319,44 +233,26 @@ export default function EmpresaDash() {
                   <option value="cartao">Cartão</option>
                 </select>
                 <select style={inputStyle} value={form.entregadorTipo} onChange={(e) => setForm({ ...form, entregadorTipo: e.target.value })}>
-                  <option value="publico">Envio Público</option>
-                  <option value="escolha">Escolher Entregador</option>
+                  <option value="publico">Entregador Público</option>
+                  <option value="privado">Entregador Privado</option>
                 </select>
               </div>
-              {form.entregadorTipo === 'escolha' && (
-                <select style={{ ...inputStyle, border: `2px solid ${CorPrincipal}` }} value={form.entregadorId} onChange={(e) => setForm({ ...form, entregadorId: e.target.value })} required>
-                  <option value="">{entregadoresOnline.length > 0 ? 'Selecionar Entregador...' : 'Nenhum entregador disponível'}</option>
-                  {entregadoresOnline.map((ent) => (<option key={ent.id} value={ent.id}>{ent.nome}</option>))}
-                </select>
-              )}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
                 <input style={inputStyle} placeholder="Valor Produtos R$" type="number" step="0.01" value={form.valor} onChange={(e) => setForm({ ...form, valor: e.target.value })} required />
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={async () => {
-                    if (!perfil.lat) return alert('Fixe o GPS no Perfil!');
-                    if (!form.rua || !form.bairro) return alert('Preencha o endereço do cliente!');
-                    setLoading(true);
-                    try {
-                        const busca = `${form.rua}, ${form.numero}, ${form.bairro}, Brasil`;
-                        const res = await fetch(`https://nominatim.openstreetmap.org{encodeURIComponent(busca)}&limit=1`);
-                        const data = await res.json();
-                        if (data && data.length > 0) {
-                            const d = calcularHaversine(perfil.lat, perfil.lng, parseFloat(data.lat), parseFloat(data.lon));
-                            setDistanciaKm(d);
-                        } else { alert('Endereço não encontrado.'); }
-                    } catch (e) { alert('Erro ao calcular.'); }
-                    setLoading(false);
-                  }}
-                  style={{ ...inputStyle, background: '#F0F7FF', fontWeight: 'bold', color: CorPrincipal, cursor: 'pointer' }}
-                >
-                  <MapPin size={14} /> {loading ? 'CALCULANDO...' : (distanciaKm > 0 ? `${distanciaKm} KM` : 'CALCULAR KM')}
+                <button type="button" disabled={loading} onClick={async () => {
+                  if (!perfil.lat) return alert('Fixe o GPS da Loja no Perfil!');
+                  if (!coordCliente.lat) return alert('Selecione o endereço na lista!');
+                  setLoading(true);
+                  const km = await calcularRotaReal({ lat: perfil.lat, lng: perfil.lng }, coordCliente);
+                  setDistanciaKm(km ? parseFloat(km.toFixed(2)) : 0);
+                  setLoading(false);
+                }} style={{ ...inputStyle, background: '#F0F7FF', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+                  {loading ? <Loader2 className="animate-spin" size={16} /> : (distanciaKm > 0 ? `${distanciaKm} KM` : <><MapPin size={16} /> CALCULAR KM</>)}
                 </button>
               </div>
-              <div style={{ background: '#F8F9FA', padding: '15px', borderRadius: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #E0E4EC' }}>
-                <span style={{ fontSize: '13px', fontWeight: 'bold' }}>TOTAL GERAL:</span>
-                <strong style={{ fontSize: '20px', color: CorPrincipal }}>R$ {valorTotalSoma.toFixed(2)}</strong>
+              <div style={{ background: '#F8F9FA', padding: '15px', borderRadius: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong>TOTAL GERAL:</strong>
+                <strong style={{ fontSize: '20px', color: CorPrincipal }}>R$ {totalPedido.toFixed(2)}</strong>
               </div>
               <button type="submit" disabled={loading} style={{ width: '100%', padding: '16px', background: CorPrincipal, color: CorDestaque, borderRadius: '12px', border: 'none', fontWeight: '900', cursor: 'pointer' }}>LANÇAR PEDIDO</button>
             </form>
@@ -365,54 +261,79 @@ export default function EmpresaDash() {
 
         {activeTab === 'historico' && (
           <section>
+             <div style={{ display: 'flex', gap: '5px', marginBottom: '15px' }}>
+              {['dia', 'semana', 'mes'].map((f) => (
+                <button key={f} onClick={() => setFiltroPeriodo(f)} style={{ flex: 1, padding: '8px', borderRadius: '20px', border: 'none', background: filtroPeriodo === f ? CorPrincipal : '#EEE', color: filtroPeriodo === f ? '#FFF' : '#666', fontWeight: 'bold' }}>{f.toUpperCase()}</button>
+              ))}
+            </div>
             <div style={{ ...cardBase, background: CorPrincipal, color: '#FFF' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                <h3>RELATÓRIO DE PEDIDOS</h3>
-                <Printer size={20} style={{ cursor: 'pointer' }} onClick={() => window.print()} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                <h3 style={{ margin: 0, fontSize: '18px' }}>RELATÓRIO FINANCEIRO</h3>
+                <Printer size={22} style={{ cursor: 'pointer' }} />
               </div>
-              
-              {/* Filtros de Data - Estrutura Técnica Mantida */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '15px' }}>
-                <div>
-                  <small style={{ color: CorDestaque }}>De:</small>
-                  <input type="date" style={{ ...inputStyle, padding: '8px' }} value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} />
-                </div>
-                <div>
-                  <small style={{ color: CorDestaque }}>Até:</small>
-                  <input type="date" style={{ ...inputStyle, padding: '8px' }} value={dataFim} onChange={(e) => setDataFim(e.target.value)} />
+              <div style={{ marginBottom:'20px' }}>
+                <small style={{ opacity:0.8 }}>Vendas por período</small>
+                <div style={{ display:'flex', alignItems:'flex-end', gap:'8px', height:'100px', marginTop:'10px' }}>
+                  {(dG?.valores || []).map((v, i) => (
+                    <div key={i} style={{ flex: 1, textAlign: 'center' }}>
+                      <div style={{ height: `${(v / dG.max) * 100}%`, background: CorDestaque, borderRadius: '6px 6px 0 0', transition: 'height 0.3s' }} />
+                      <small style={{ fontSize: '9px' }}>{dG.labels[i]}</small>
+                    </div>
+                  ))}
                 </div>
               </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                <div style={{ background: 'rgba(255,255,255,0.1)', padding: '10px', borderRadius: '10px' }}>
-                  <small>Produtos</small><br />
-                  <strong>R$ {listaFiltrada.reduce((a, b) => a + (parseFloat(b.valorProdutos) || 0), 0).toFixed(2)}</strong>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                <div style={{ background: 'rgba(255,255,255,0.1)', padding: '15px', borderRadius: '15px' }}>
+                  <small style={{ opacity: 0.8 }}>Produtos</small>
+                  <div style={{ fontSize: '18px', fontWeight: 'bold' }}>R$ {totalProdutosRel.toFixed(2)}</div>
                 </div>
-                <div style={{ background: 'rgba(255,255,255,0.1)', padding: '10px', borderRadius: '10px' }}>
-                  <small>Fretes</small><br />
-                  <strong>R$ {listaFiltrada.reduce((a, b) => a + (parseFloat(b.valorEntrega) || 0), 0).toFixed(2)}</strong>
+                <div style={{ background: 'rgba(255,255,255,0.1)', padding: '15px', borderRadius: '15px' }}>
+                  <small style={{ opacity: 0.8 }}>Fretes</small>
+                  <div style={{ fontSize: '18px', fontWeight: 'bold' }}>R$ {totalFretesRel.toFixed(2)}</div>
                 </div>
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'15px', marginTop:'15px' }}>
+                <div style={{ background:'rgba(255,255,255,0.1)', padding:'15px', borderRadius:'15px' }}>
+                  <small style={{opacity:0.8}}>Lucro Líquido (Taxas)</small>
+                  <div style={{fontSize:'18px',fontWeight:'bold'}}>R$ {lucroLiquidoRel.toFixed(2)}</div>
+                </div>
+                <div style={{ background:'rgba(255,255,255,0.1)', padding:'15px', borderRadius:'15px' }}>
+                  <small style={{opacity:0.8}}>Ticket Médio</small>
+                  <div style={{fontSize:'18px',fontWeight:'bold'}}>R$ {ticketMedioRel.toFixed(2)}</div>
+                </div>
+              </div>
+              <div style={{marginTop:'20px'}}>
+                <small style={{opacity:0.8}}>Ranking Entregadores (Top 3)</small>
+                {rankingEntregadoresRel.slice(0,3).map((e, i) => (
+                  <div key={i} style={{ display:'flex', justifyContent:'space-between', background:'rgba(255,255,255,0.1)', padding:'10px', borderRadius:'10px', marginTop:'6px', fontSize:'13px' }}>
+                    <span>{i+1}º {e.nome}</span>
+                    <span>{e.pedidos} entregas</span>
+                  </div>
+                ))}
               </div>
             </div>
-
-            <input style={{ ...inputStyle, margin: '15px 0' }} placeholder="🔍 Buscar cliente ou código..." value={buscaPedido} onChange={(e) => setBuscaPedido(e.target.value)} />
-            
-            {listaFiltrada.map((p) => (
-              <div key={p.id} style={{ ...cardBase, padding: '15px', fontSize: '13px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #F0F0F0', paddingBottom: '8px', marginBottom: '8px' }}>
-                  <strong>{p.codigoRastreio} - {p.clienteNome}</strong>
-                  <span style={{ fontWeight: 'bold', color: CorPrincipal }}>{p.status?.toUpperCase()}</span>
+            {pedidos.map(p => (
+              <div key={p.id} style={{ ...cardBase, borderLeft: `6px solid ${p.status === 'entregue' ? '#2ecc71' : CorDestaque}` }}>
+                <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'5px' }}>
+                  <strong>{p.clienteNome || 'Cliente'}</strong>
+                  <span style={{fontSize:'11px',fontWeight:'bold', color: CorPrincipal}}>{p.status?.toUpperCase()}</span>
                 </div>
-                <p>📍 <b>Endereço:</b> {p.enderecoEntrega?.rua}, {p.enderecoEntrega?.numero} - {p.enderecoEntrega?.bairro}</p>
-                <p>🛵 <b>Entregador:</b> {p.entregadorNome || 'Buscando...'}</p>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', background: '#F9F9F9', padding: '10px', borderRadius: '8px', margin: '10px 0' }}>
-                  <span><Clock size={12} /> <b>Coleta:</b> {p.horaColeta ? new Date(p.horaColeta.seconds * 1000).toLocaleTimeString() : '--:--'}</span>
-                  <span><CheckCircle size={12} /> <b>Entrega:</b> {p.horaEntrega ? new Date(p.horaEntrega.seconds * 1000).toLocaleTimeString() : '--:--'}</span>
+                <div style={{fontSize:'12px',color:'#666', display: 'flex', alignItems: 'center', gap: '4px'}}>
+                  <MapPin size={14} /> {p.enderecoEntrega?.rua}, {p.enderecoEntrega?.numero}
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '5px', fontWeight: 'bold' }}>
-                  <span>Prod: R$ {parseFloat(p.valorProdutos || 0).toFixed(2)}</span>
-                  <span>Frete: R$ {parseFloat(p.valorEntrega || 0).toFixed(2)}</span>
-                  <span style={{ color: '#e67e22' }}>Taxa App: R$ 0.30</span>
+                <div style={{fontSize:'11px',marginTop:'8px', display: 'flex', justifyContent: 'space-between'}}>
+                  <span>ID Pedido: <strong>{p.codigoRastreio}</strong></span>
+                  <span>Pagamento: <strong>{String(p.pagamento || '').toUpperCase()}</strong></span>
+                </div>
+                <div style={{ background:'#F8F9FA', padding:'12px', borderRadius:'12px', marginTop:'12px', fontSize:'12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <div>📦 Prod: <strong>R$ {Number(p.valorProdutos||0).toFixed(2)}</strong></div>
+                  <div>🚚 Entr: <strong>R$ {Number(p.valorEntrega||0).toFixed(2)}</strong></div>
+                  <div>💎 Taxa: <strong>R$ {Number(p.valorTaxaAdmin || TAXA_FIXA_ADM).toFixed(2)}</strong></div>
+                  <div>🏍️ Motoboy: <strong>{p.entregadorNome || '...'}</strong></div>
+                </div>
+                <div style={{marginTop:'12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                   <small style={{color: '#999'}}>Solicitado: {p.horaSolicitacao?.seconds ? new Date(p.horaSolicitacao.seconds * 1000).toLocaleTimeString() : '--:--'}</small>
+                   <strong style={{fontSize:'16px', color: CorPrincipal}}>Total: R$ {Number(p.totalGeral||0).toFixed(2)}</strong>
                 </div>
               </div>
             ))}
@@ -421,28 +342,58 @@ export default function EmpresaDash() {
 
         {activeTab === 'perfil' && (
           <section style={cardBase}>
-            <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-              <div style={{ width: 80, height: 80, borderRadius: '50%', background: '#EEE', margin: '0 auto', position: 'relative', overflow: 'hidden', border: `2px solid ${CorPrincipal}` }}>
-                {uploading ? <Loader2 className="animate-spin" style={{ marginTop: '30px' }} /> : <img src={perfil.logo || 'https://via.placeholder.com'} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
-                <button onClick={() => fileInputRef.current.click()} style={{ position: 'absolute', bottom: 0, right: 0, background: CorPrincipal, color: '#FFF', border: 'none', borderRadius: '50%', padding: '5px', cursor: 'pointer' }}><Camera size={14} /></button>
+            <div style={{ display: 'grid', gap: '15px' }}>
+              <div style={{ textAlign: 'center', marginBottom: '10px' }}>
+                <div style={{ position: 'relative', width: '110px', height: '110px', margin: '0 auto' }}>
+                  <img src={perfil.logo || 'https://via.placeholder.com'} style={{ width: '100%', height: '100%', borderRadius: '50%', border: `3px solid ${CorPrincipal}`, objectFit: 'cover' }} />
+                  <button onClick={() => fileInputRef.current.click()} style={{ position: 'absolute', bottom: 0, right: 0, background: CorDestaque, border: 'none', padding: '8px', borderRadius: '50%', cursor: 'pointer' }}><Camera size={16} color={CorPrincipal} /></button>
+                </div>
+                <input type="file" ref={fileInputRef} hidden onChange={handleUploadLogo} />
               </div>
-              <input type="file" ref={fileInputRef} onChange={handleUploadLogo} style={{ display: 'none' }} accept="image/*" />
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#F8F9FA', padding: '12px', borderRadius: '12px', marginBottom: '15px' }}>
-              <span style={{ fontWeight: 'bold', fontSize: '13px' }}>STATUS GPS (ONLINE):</span>
-              <button onClick={() => setPerfil({ ...perfil, gpsAtivo: !perfil.gpsAtivo })} style={{ background: perfil.gpsAtivo ? '#2ecc71' : '#e74c3c', color: '#FFF', border: 'none', padding: '6px 18px', borderRadius: '20px', fontWeight: 'bold', cursor: 'pointer' }}>{perfil.gpsAtivo ? 'ATIVO' : 'INATIVO'}</button>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-              <input style={inputStyle} placeholder="Nome" value={perfil.nome} onChange={(e) => setPerfil({ ...perfil, nome: e.target.value })} />
-              <input style={inputStyle} placeholder="Responsável" value={perfil.responsavel} onChange={(e) => setPerfil({ ...perfil, responsavel: e.target.value })} />
-              <input style={inputStyle} placeholder="Telefone" value={perfil.telefone} onChange={(e) => setPerfil({ ...perfil, telefone: e.target.value })} />
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '10px' }}>
-                <input style={inputStyle} placeholder="Rua" value={perfil.rua} onChange={(e) => setPerfil({ ...perfil, rua: e.target.value })} />
-                <input style={inputStyle} placeholder="Nº" value={perfil.numero} onChange={(e) => setPerfil({ ...perfil, numero: e.target.value })} />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <div style={{ gridColumn: 'span 2' }}>
+                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: CorPrincipal }}>Nome Social da Empresa</label>
+                  <input style={inputStyle} value={perfil.nomeSocial || ''} onChange={e => setPerfil({ ...perfil, nomeSocial: e.target.value })} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: CorPrincipal }}>Nome Fantasia</label>
+                  <input style={inputStyle} value={perfil.nomeFantasia || ''} onChange={e => setPerfil({ ...perfil, nomeFantasia: e.target.value })} />
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: CorPrincipal }}>Responsável</label>
+                  <input style={inputStyle} value={perfil.responsavel || ''} onChange={e => setPerfil({ ...perfil, responsavel: e.target.value })} />
+                </div>
               </div>
-              <input style={inputStyle} placeholder="Bairro" value={perfil.bairro} onChange={(e) => setPerfil({ ...perfil, bairro: e.target.value })} />
-              <button onClick={() => { navigator.geolocation.getCurrentPosition(async (pos) => { setPerfil({ ...perfil, lat: pos.coords.latitude, lng: pos.coords.longitude }); alert('GPS Capturado!'); }); }} style={{ ...inputStyle, background: CorDestaque, color: CorPrincipal, fontWeight: 'bold', border: 'none', cursor: 'pointer' }}>{perfil.lat ? 'GPS CAPTURADO ✅' : 'FIXAR GPS DA LOJA'}</button>
-              <button onClick={async () => { setLoading(true); await setDoc(doc(db, 'perfil_empresa', user.uid), perfil); setLoading(false); alert('Perfil Atualizado!'); }} style={{ ...inputStyle, background: CorPrincipal, color: '#FFF', fontWeight: 'bold', border: 'none', cursor: 'pointer' }}>{loading ? 'SALVANDO...' : 'SALVAR ALTERAÇÕES'}</button>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+                <div><label style={{ fontSize: '11px', fontWeight: 'bold' }}>Fixo</label><input style={inputStyle} value={perfil.telefoneFixo || ''} onChange={e => setPerfil({ ...perfil, telefoneFixo: e.target.value })} /></div>
+                <div><label style={{ fontSize: '11px', fontWeight: 'bold' }}>Comercial</label><input style={inputStyle} value={perfil.telefoneComercial || ''} onChange={e => setPerfil({ ...perfil, telefoneComercial: e.target.value })} /></div>
+                <div><label style={{ fontSize: '11px', fontWeight: 'bold' }}>WhatsApp</label><input style={inputStyle} value={perfil.whatsapp || ''} onChange={e => setPerfil({ ...perfil, whatsapp: e.target.value })} /></div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 2fr', gap: '10px' }}>
+                <input style={inputStyle} placeholder="Rua" value={perfil.rua || ''} onChange={e => setPerfil({ ...perfil, rua: e.target.value })} />
+                <input style={inputStyle} placeholder="Nº" value={perfil.numero || ''} onChange={e => setPerfil({ ...perfil, numero: e.target.value })} />
+                <input style={inputStyle} placeholder="Bairro" value={perfil.bairro || ''} onChange={e => setPerfil({ ...perfil, bairro: e.target.value })} />
+              </div>
+
+              <button onClick={() => {
+                navigator.geolocation.getCurrentPosition(pos => {
+                  setPerfil({ ...perfil, lat: pos.coords.latitude, lng: pos.coords.longitude });
+                  alert("GPS da Loja Capturado!");
+                });
+              }} style={{ ...inputStyle, background: CorDestaque, fontWeight: 'bold', border: 'none', cursor: 'pointer', color: CorPrincipal }}>
+                {perfil.lat ? 'GPS DA LOJA ATIVO ✅' : 'ATIVAR GPS DA LOJA'}
+              </button>
+
+              <button onClick={async () => {
+                setLoading(true);
+                await setDoc(doc(db, 'perfil_empresa', user.uid), perfil);
+                setLoading(false);
+                alert('Dados salvos!');
+              }} style={{ ...inputStyle, background: CorPrincipal, color: '#FFF', fontWeight: 'bold', border: 'none', cursor: 'pointer', padding: '18px' }}>
+                {loading ? <Loader2 className="animate-spin" size={20} /> : 'SALVAR ALTERAÇÕES'}
+              </button>
             </div>
           </section>
         )}
