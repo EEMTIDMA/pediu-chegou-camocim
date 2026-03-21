@@ -14,11 +14,11 @@ import {
 } from 'lucide-react';
 
 import { buscarSugestoes, calcularRotaReal } from '../services/maps';
+import MapaTempoReal from '../components/MapaTempoReal';
 
 const CorPrincipal = '#312D6F';
 const CorDestaque = '#FFD700';
 const CorFundo = '#F0F2F5';
-const RAIO_MAXIMO_KM = 4;
 const TAXA_FIXA_ADM = 0.30;
 
 const cardBase = { backgroundColor: '#FFF', borderRadius: '20px', padding: '25px', boxShadow: '0 8px 30px rgba(0,0,0,0.08)', marginBottom: '20px' };
@@ -36,6 +36,7 @@ export default function EmpresaDash() {
   const [distanciaKm, setDistanciaKm] = useState(0);
   const [coordCliente, setCoordCliente] = useState({ lat: null, lng: null });
   const [sugestoesEndereco, setSugestoesEndereco] = useState([]);
+  const [posicoesEntregadores, setPosicoesEntregadores] = useState({});
   
   const [perfil, setPerfil] = useState({
     nomeSocial: '', nomeFantasia: '', responsavel: '', 
@@ -50,30 +51,15 @@ export default function EmpresaDash() {
 
   useEffect(() => {
     if (!user?.uid) return;
-    
     getDoc(doc(db, 'perfil_empresa', user.uid)).then((d) => {
-      if (d.exists()) {
-        const dados = d.data();
-        setPerfil({
-          nomeSocial: dados.nomeSocial || '',
-          nomeFantasia: dados.nomeFantasia || '',
-          responsavel: dados.responsavel || '',
-          telefoneFixo: dados.telefoneFixo || '',
-          telefoneComercial: dados.telefoneComercial || '',
-          whatsapp: dados.whatsapp || '',
-          rua: dados.rua || '',
-          numero: dados.numero || '',
-          bairro: dados.bairro || '',
-          logo: dados.logo || '',
-          lat: dados.lat || null,
-          lng: dados.lng || null
-        });
-      }
+      if (d.exists()) setPerfil(prev => ({ ...prev, ...d.data() }));
     });
 
     const q = query(collection(db, 'pedidos'), where('empresaId', '==', String(user.uid)));
-    
     const unsub = onSnapshot(q, (s) => {
+      if (s.docChanges().some(change => change.type === "added") && !s.metadata.hasPendingWrites) {
+        new Audio('https://assets.mixkit.co').play().catch(() => {});
+      }
       const listaRaw = s.docs.map(d => ({ id: d.id, ...d.data() }));
       const agora = new Date();
       const hoje = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate()).getTime();
@@ -90,7 +76,22 @@ export default function EmpresaDash() {
       setPedidos(filtrados.sort((a,b) => (b.horaSolicitacao?.seconds || 0) - (a.horaSolicitacao?.seconds || 0)));
     });
     return () => unsub();
-  }, [user, filtroPeriodo]);
+  }, [user?.uid, filtroPeriodo]);
+
+  useEffect(() => {
+    const pedidosAtivos = pedidos.filter(p => p.status === 'em_rota' && p.entregadorId);
+    const listeners = pedidosAtivos.map(p => {
+      return onSnapshot(doc(db, 'perfil_entregador', p.entregadorId), (docSnap) => {
+        if (docSnap.exists()) {
+          const d = docSnap.data();
+          if (d.lat && d.lng) {
+            setPosicoesEntregadores(prev => ({ ...prev, [p.id]: { lat: d.lat, lng: d.lng } }));
+          }
+        }
+      });
+    });
+    return () => listeners.forEach(unsub => unsub());
+  }, [pedidos]);
 
   const gerarCodigoPC = () => `PC-${Math.floor(1000 + Math.random() * 9000)}`;
   const taxaEntrega = (km) => km <= 1 ? 4.0 : km <= 3 ? 5.0 : km <= 5 ? 6.0 : km <= 7 ? 7.0 : 10.0 + (10.0 * 0.2 * Math.ceil(km - 7));
@@ -131,15 +132,12 @@ export default function EmpresaDash() {
         horaSolicitacao: serverTimestamp(),
         empresaId: String(user.uid),
         nomeLoja: perfil.nomeFantasia || 'Loja',
-        lojaNome: perfil.nomeFantasia || 'Loja', // Correção para o entregador
-        lojaTelefone: perfil.whatsapp || '', // Correção para contato
-        distanciaKm: Number(distanciaKm) || 0,
+        lojaTelefone: perfil.whatsapp || '',
+        distanciaKm: Number(distanciaKm),
         latLoja: Number(perfil.lat), 
         lngLoja: Number(perfil.lng),
         latCliente: Number(coordCliente.lat), 
         lngCliente: Number(coordCliente.lng),
-        raioBusca: 50, // Garante visibilidade
-        indiceFila: 0,
         entregadoresNotificados: []
       });
       alert(`Pedido ${codigo} Lançado!`);
@@ -149,20 +147,17 @@ export default function EmpresaDash() {
     setLoading(false);
   };
 
-  /* ================= CALCULOS DASHBOARD ================= */
-  const pedidosConcluidos = (pedidos || []).filter(p => p?.status === 'entregue');
   const totalProdutosRel = (pedidos || []).reduce((a,b)=>a + (Number(b?.valorProdutos)||0),0);
   const totalFretesRel = (pedidos || []).reduce((a,b)=>a + (Number(b?.valorEntrega)||0),0);
   const totalTaxasRel = (pedidos || []).reduce((a,b)=>a + (Number(b?.valorTaxaAdmin) || TAXA_FIXA_ADM),0);
-  const lucroLiquidoRel = totalTaxasRel; 
-  const ticketMedioRel = (pedidos || []).length > 0 ? (totalProdutosRel + totalFretesRel + totalTaxasRel) / pedidos.length : 0;
-
+  const ticketMedioRel = pedidos.length > 0 ? (totalProdutosRel + totalFretesRel + totalTaxasRel) / pedidos.length : 0;
+  
   const rankingEntregadoresRel = Object.values((pedidos || []).reduce((acc,p)=>{
-      const nome = p?.entregadorNome || "Não atribuído";
-      if(!acc[nome]){ acc[nome] = { nome, pedidos:0 }; }
-      acc[nome].pedidos += 1;
-      return acc;
-    },{})).sort((a,b)=>b.pedidos-a.pedidos);
+    const nome = p?.entregadorNome || "Não atribuído";
+    if(!acc[nome]){ acc[nome] = { nome, pedidos:0 }; }
+    acc[nome].pedidos += 1;
+    return acc;
+  },{})).sort((a,b)=>b.pedidos-a.pedidos);
 
   const gerarGraficoRel = () => {
     const dias = {};
@@ -196,7 +191,6 @@ export default function EmpresaDash() {
       </div>
 
       <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto' }}>
-        
         {activeTab === 'pedidos' && (
           <section style={cardBase}>
             <form onSubmit={handleCriarPedido} style={{ display: 'grid', gap: '15px' }}>
@@ -244,7 +238,8 @@ export default function EmpresaDash() {
                   if (!coordCliente.lat) return alert('Selecione o endereço na lista!');
                   setLoading(true);
                   const km = await calcularRotaReal({ lat: perfil.lat, lng: perfil.lng }, coordCliente);
-                  setDistanciaKm(km ? parseFloat(km.toFixed(2)) : 0);
+                  if (km && !isNaN(km)) setDistanciaKm(parseFloat(km.toFixed(2)));
+                  else setDistanciaKm(0);
                   setLoading(false);
                 }} style={{ ...inputStyle, background: '#F0F7FF', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
                   {loading ? <Loader2 className="animate-spin" size={16} /> : (distanciaKm > 0 ? `${distanciaKm} KM` : <><MapPin size={16} /> CALCULAR KM</>)}
@@ -261,7 +256,7 @@ export default function EmpresaDash() {
 
         {activeTab === 'historico' && (
           <section>
-             <div style={{ display: 'flex', gap: '5px', marginBottom: '15px' }}>
+            <div style={{ display: 'flex', gap: '5px', marginBottom: '15px' }}>
               {['dia', 'semana', 'mes'].map((f) => (
                 <button key={f} onClick={() => setFiltroPeriodo(f)} style={{ flex: 1, padding: '8px', borderRadius: '20px', border: 'none', background: filtroPeriodo === f ? CorPrincipal : '#EEE', color: filtroPeriodo === f ? '#FFF' : '#666', fontWeight: 'bold' }}>{f.toUpperCase()}</button>
               ))}
@@ -271,43 +266,43 @@ export default function EmpresaDash() {
                 <h3 style={{ margin: 0, fontSize: '18px' }}>RELATÓRIO FINANCEIRO</h3>
                 <Printer size={22} style={{ cursor: 'pointer' }} />
               </div>
-              <div style={{ marginBottom:'20px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>
+                <div style={{ background: 'rgba(255,255,255,0.1)', padding: '15px', borderRadius: '12px' }}>
+                  <small style={{ opacity: 0.8 }}>Total Produtos</small>
+                  <h3 style={{ margin: 0 }}>R$ {totalProdutosRel.toFixed(2)}</h3>
+                </div>
+                <div style={{ background: 'rgba(255,255,255,0.1)', padding: '15px', borderRadius: '12px' }}>
+                  <small style={{ opacity: 0.8 }}>Lucro (Taxas)</small>
+                  <h3 style={{ margin: 0 }}>R$ {totalTaxasRel.toFixed(2)}</h3>
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                <div style={{ background: 'rgba(255,255,255,0.1)', padding: '15px', borderRadius: '12px' }}>
+                  <small style={{ opacity: 0.8 }}>Total Fretes</small>
+                  <h3 style={{ margin: 0 }}>R$ {totalFretesRel.toFixed(2)}</h3>
+                </div>
+                <div style={{ background: 'rgba(255,255,255,0.1)', padding: '15px', borderRadius: '12px' }}>
+                  <small style={{ opacity: 0.8 }}>Ticket Médio</small>
+                  <h3 style={{ margin: 0 }}>R$ {ticketMedioRel.toFixed(2)}</h3>
+                </div>
+              </div>
+              <div style={{ marginTop:'20px' }}>
                 <small style={{ opacity:0.8 }}>Vendas por período</small>
                 <div style={{ display:'flex', alignItems:'flex-end', gap:'8px', height:'100px', marginTop:'10px' }}>
                   {(dG?.valores || []).map((v, i) => (
                     <div key={i} style={{ flex: 1, textAlign: 'center' }}>
-                      <div style={{ height: `${(v / dG.max) * 100}%`, background: CorDestaque, borderRadius: '6px 6px 0 0', transition: 'height 0.3s' }} />
+                      <div style={{ height: `${(v / dG.max) * 100}%`, background: CorDestaque, borderRadius: '6px 6px 0 0' }} />
                       <small style={{ fontSize: '9px' }}>{dG.labels[i]}</small>
                     </div>
                   ))}
                 </div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
-                <div style={{ background: 'rgba(255,255,255,0.1)', padding: '15px', borderRadius: '15px' }}>
-                  <small style={{ opacity: 0.8 }}>Produtos</small>
-                  <div style={{ fontSize: '18px', fontWeight: 'bold' }}>R$ {totalProdutosRel.toFixed(2)}</div>
-                </div>
-                <div style={{ background: 'rgba(255,255,255,0.1)', padding: '15px', borderRadius: '15px' }}>
-                  <small style={{ opacity: 0.8 }}>Fretes</small>
-                  <div style={{ fontSize: '18px', fontWeight: 'bold' }}>R$ {totalFretesRel.toFixed(2)}</div>
-                </div>
-              </div>
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'15px', marginTop:'15px' }}>
-                <div style={{ background:'rgba(255,255,255,0.1)', padding:'15px', borderRadius:'15px' }}>
-                  <small style={{opacity:0.8}}>Lucro Líquido (Taxas)</small>
-                  <div style={{fontSize:'18px',fontWeight:'bold'}}>R$ {lucroLiquidoRel.toFixed(2)}</div>
-                </div>
-                <div style={{ background:'rgba(255,255,255,0.1)', padding:'15px', borderRadius:'15px' }}>
-                  <small style={{opacity:0.8}}>Ticket Médio</small>
-                  <div style={{fontSize:'18px',fontWeight:'bold'}}>R$ {ticketMedioRel.toFixed(2)}</div>
-                </div>
-              </div>
-              <div style={{marginTop:'20px'}}>
-                <small style={{opacity:0.8}}>Ranking Entregadores (Top 3)</small>
-                {rankingEntregadoresRel.slice(0,3).map((e, i) => (
-                  <div key={i} style={{ display:'flex', justifyContent:'space-between', background:'rgba(255,255,255,0.1)', padding:'10px', borderRadius:'10px', marginTop:'6px', fontSize:'13px' }}>
-                    <span>{i+1}º {e.nome}</span>
-                    <span>{e.pedidos} entregas</span>
+              <div style={{ marginTop: '20px' }}>
+                <small style={{ opacity: 0.8 }}>Ranking Entregadores</small>
+                {rankingEntregadoresRel.map((e, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', marginTop: '10px', fontSize: '14px' }}>
+                    <span>{e.nome}</span>
+                    <strong>{e.pedidos} entregas</strong>
                   </div>
                 ))}
               </div>
@@ -321,6 +316,15 @@ export default function EmpresaDash() {
                 <div style={{fontSize:'12px',color:'#666', display: 'flex', alignItems: 'center', gap: '4px'}}>
                   <MapPin size={14} /> {p.enderecoEntrega?.rua}, {p.enderecoEntrega?.numero}
                 </div>
+
+                {p.latLoja && p.latCliente && (
+                  <MapaTempoReal 
+                    loja={{ lat: Number(p.latLoja), lng: Number(p.lngLoja) }} 
+                    cliente={{ lat: Number(p.latCliente), lng: Number(p.lngCliente) }} 
+                    entregadorPos={posicoesEntregadores[p.id]} 
+                  />
+                )}
+
                 <div style={{fontSize:'11px',marginTop:'8px', display: 'flex', justifyContent: 'space-between'}}>
                   <span>ID Pedido: <strong>{p.codigoRastreio}</strong></span>
                   <span>Pagamento: <strong>{String(p.pagamento || '').toUpperCase()}</strong></span>
@@ -332,8 +336,8 @@ export default function EmpresaDash() {
                   <div>🏍️ Motoboy: <strong>{p.entregadorNome || '...'}</strong></div>
                 </div>
                 <div style={{marginTop:'12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-                   <small style={{color: '#999'}}>Solicitado: {p.horaSolicitacao?.seconds ? new Date(p.horaSolicitacao.seconds * 1000).toLocaleTimeString() : '--:--'}</small>
-                   <strong style={{fontSize:'16px', color: CorPrincipal}}>Total: R$ {Number(p.totalGeral||0).toFixed(2)}</strong>
+                  <small style={{color: '#999'}}>Solicitado: {p.horaSolicitacao?.seconds ? new Date(p.horaSolicitacao.seconds * 1000).toLocaleTimeString() : '--:--'}</small>
+                  <strong style={{fontSize:'16px', color: CorPrincipal}}>Total: R$ {Number(p.totalGeral||0).toFixed(2)}</strong>
                 </div>
               </div>
             ))}
@@ -345,7 +349,7 @@ export default function EmpresaDash() {
             <div style={{ display: 'grid', gap: '15px' }}>
               <div style={{ textAlign: 'center', marginBottom: '10px' }}>
                 <div style={{ position: 'relative', width: '110px', height: '110px', margin: '0 auto' }}>
-                  <img src={perfil.logo || 'https://via.placeholder.com'} style={{ width: '100%', height: '100%', borderRadius: '50%', border: `3px solid ${CorPrincipal}`, objectFit: 'cover' }} />
+                  <img src={perfil.logo || 'https://via.placeholder.com'} style={{ width: '100%', height: '100%', borderRadius: '50%', border: `3px solid ${CorPrincipal}`, objectFit: 'cover' }} alt="logo" />
                   <button onClick={() => fileInputRef.current.click()} style={{ position: 'absolute', bottom: 0, right: 0, background: CorDestaque, border: 'none', padding: '8px', borderRadius: '50%', cursor: 'pointer' }}><Camera size={16} color={CorPrincipal} /></button>
                 </div>
                 <input type="file" ref={fileInputRef} hidden onChange={handleUploadLogo} />
@@ -364,19 +368,16 @@ export default function EmpresaDash() {
                   <input style={inputStyle} value={perfil.responsavel || ''} onChange={e => setPerfil({ ...perfil, responsavel: e.target.value })} />
                 </div>
               </div>
-
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
                 <div><label style={{ fontSize: '11px', fontWeight: 'bold' }}>Fixo</label><input style={inputStyle} value={perfil.telefoneFixo || ''} onChange={e => setPerfil({ ...perfil, telefoneFixo: e.target.value })} /></div>
                 <div><label style={{ fontSize: '11px', fontWeight: 'bold' }}>Comercial</label><input style={inputStyle} value={perfil.telefoneComercial || ''} onChange={e => setPerfil({ ...perfil, telefoneComercial: e.target.value })} /></div>
                 <div><label style={{ fontSize: '11px', fontWeight: 'bold' }}>WhatsApp</label><input style={inputStyle} value={perfil.whatsapp || ''} onChange={e => setPerfil({ ...perfil, whatsapp: e.target.value })} /></div>
               </div>
-
               <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 2fr', gap: '10px' }}>
                 <input style={inputStyle} placeholder="Rua" value={perfil.rua || ''} onChange={e => setPerfil({ ...perfil, rua: e.target.value })} />
                 <input style={inputStyle} placeholder="Nº" value={perfil.numero || ''} onChange={e => setPerfil({ ...perfil, numero: e.target.value })} />
                 <input style={inputStyle} placeholder="Bairro" value={perfil.bairro || ''} onChange={e => setPerfil({ ...perfil, bairro: e.target.value })} />
               </div>
-
               <button onClick={() => {
                 navigator.geolocation.getCurrentPosition(pos => {
                   setPerfil({ ...perfil, lat: pos.coords.latitude, lng: pos.coords.longitude });
@@ -385,7 +386,6 @@ export default function EmpresaDash() {
               }} style={{ ...inputStyle, background: CorDestaque, fontWeight: 'bold', border: 'none', cursor: 'pointer', color: CorPrincipal }}>
                 {perfil.lat ? 'GPS DA LOJA ATIVO ✅' : 'ATIVAR GPS DA LOJA'}
               </button>
-
               <button onClick={async () => {
                 setLoading(true);
                 await setDoc(doc(db, 'perfil_empresa', user.uid), perfil);
